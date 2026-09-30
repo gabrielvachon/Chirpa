@@ -1,0 +1,15 @@
+/.venv
+/comm_settings.json
+/corr_to_char_func
+/debug
+/investigate
+/message.wav
+/Other
+/Other figure generation
+/package
+/test.py
+/test.wav
+/test123.wav
+/test2.py
+/token
+/__pycache__
