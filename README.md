@@ -20,12 +20,18 @@ enc = chirp_encoder.encoder(rs=rs, params=settings)
 
 ### Decoder
 You can decode in realtime or decode an audio file.
-#### Realtime decoding
+#### Dynamic decoding
+**Dynamic (or realtime) decoding** works by calling the decoding function every time a new audio data buffer is received. `_dynamic_decode()` is used to accomplish this type of decoding. Every time new audio data gets through `_dynamic_decode()`, this data gets saved in the `decoder` class, the data gets captured from the moment the start preamble is detected to the detection of the end preamble. After all the decoding of the data, the message is returned in byte format. This decoding method is useful when using the protocol in realtime or in a real scenario. 
+
 Realtime decoder implementation example:
 ```python
 import sounddevice as sd
 import chirp_decoder
 import json
+
+samplerate = 44100
+blocksize = 8192
+rs = False
 
 file_content = open("comm_settings.json", "r")
 settings = json.loads(file_content.read())
@@ -33,10 +39,10 @@ settings = json.loads(file_content.read())
 sd.default.device[0] = 1
 channels = sd.query_devices(sd.default.device[0])["max_input_channels"]
 
-dec = chirp_decoder.decoder(rs=True, graphical=False)
+dec = chirp_decoder.decoder(rs=rs)
 
 with sd.InputStream(
-    samplerate=fs,
+    samplerate=samplerate,
     blocksize=blocksize,
     channels=channels,
     dtype='float32'
@@ -53,6 +59,7 @@ with sd.InputStream(
 
             if msg is not None:
                 print(f"\nReceived: {msg}")
+                print(len(msg))
 
             if dec.state == "acq":
                 prt = "Receiving..."
@@ -66,7 +73,9 @@ with sd.InputStream(
         print("\nStopping.")
 ```
 
-#### File decoding
+#### Static decoding
+**Static decoding (or array decoding)** is another way to use the decoder. Adversely to `_dynamic_decode()`, this method, `_static_decode()` allows you to feed a whole audio data array through the decoder and get a message from it **(only the first message returned at the moment)**. Although this method natively decomposes the data into blocks, it doesn't save them to the class, they are rather processed in one go and the data gets discarded afterward. This is useful for testing, debugging or simulating.
+
 File decoding implementation example:
 ```python
 import json

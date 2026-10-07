@@ -13,6 +13,7 @@ class decoder:
         - whole audio files
     Data type must be of type *numpy.ndarray*.
     """
+    # region INIT
     def __init__(self, rs:bool, graphical:bool=False, params:dict=default_settings):
         """
         Initializes a decoder. Creates bit models for each channel, preamble models, initializes variables and buffers according to the specified settings.
@@ -26,6 +27,7 @@ class decoder:
             **params** : *dict* (optional)
                 Allows the user to input custom settings. The settings must be placed in a dictionary. The dictionary format must follow the documentation. Alternatively, you can follow the `default_settings` variable from `chirp_utils.py` to set the parameters.
         """
+        # region PARAMETERS
         self.default_settings = default_settings
         self._set_parameters(params)
  
@@ -47,8 +49,9 @@ class decoder:
         self.dyn_dec_init = False
         self.end_data_found = False
         self.decoded_msg = None
+        # endregion PARAMETERS
 
-        #region BITS AND FILTERS
+        # region BITS AND FILTERS
         # Bit models and bandpass filters creation
         channel_arrangement_data = range(self.bits.shape[1])
         for m in channel_arrangement_data:
@@ -77,9 +80,9 @@ class decoder:
             f0_f = (f_s_m + f_e_m) / 2                  # Low-pass shift -> band-pass                             
             t_f = np.arange(len(h)) / self.fs
             self.h_bp[m] = h * np.exp(2j * np.pi * f0_f * t_f)
-        #endregion
+        # endregion
 
-        #region PREAMBLES
+        # region PREAMBLES
         # Preamble models
         self.N_pre_start = int(self.fs * self.start_pre_duration)
         self.t_pre_start = np.arange(self.N_pre_start) / self.fs
@@ -121,11 +124,12 @@ class decoder:
             f_e_m = f_s_m + (self.f1 - self.f0) / self.bits.shape[1]
             self.end_pre_signal += linear_chirp(self.t_pre_end, f0=f_s_m, f1=f_e_m, T=self.end_pre_duration) * self.win_pre_end
             self.end_pre_signal += linear_chirp(self.t_pre_end, f0=f_e_m, f1=f_s_m, T=self.end_pre_duration) * self.win_pre_end
-        #endregion
+        # endregion PREAMBLES
 
         self.pre_buffer_len = int(np.ceil(max(self.N_pre_start, self.N_pre_end) / self.blocksize))
         self.pre_buffer = collections.deque(maxlen=self.blocksize * self.pre_buffer_len)
 
+        # region GRAPHICS_INIT
         # Arrays for visualization only
         if self.graphical:
             self.rolling_buffer0 = []
@@ -153,7 +157,10 @@ class decoder:
                 "data_buffer_bit_range": None,
                 "data_buffer_bit_separation": None
                 }
-
+        # endregion GRAPHICS_INIT
+    # endregion INIT
+    
+    # region CORR_TO_BYTES
     def _corr_to_bytes(self, corr_data, fs, T, s_idx:int, e_idx:int, min_range:float, max_range:float):
         """
         Converts bit correlation arrays to readable bytes.
@@ -182,7 +189,6 @@ class decoder:
         N_bit = int(fs * T)
         min_threshold = int(N_bit * min_range)
         max_threshold = int(N_bit * (1 - max_range))
-        bits = corr_data.shape[0]
         channels = corr_data.shape[1]
         
         # Trims the correlation data to get only the data part. The trimming works based on the preamble correlation peak. 
@@ -242,7 +248,9 @@ class decoder:
             idx_start += N_bit
         decoded_bytes = bytes(decoded)
         return decoded_bytes, msg_len
+    # endregion CORR_TO_BYTES
 
+    # region DEPR_GET_PEAKS
     def _get_peaks(self, NCC:np.array, fs, T, height, width, threshold, distance, prominence):
         """
         Deprecated
@@ -258,6 +266,7 @@ class decoder:
             bit_1.append(signal.find_peaks(x=NCC[1][i], height=height, distance=int(distance*fs*T), width=width, threshold=threshold, prominence=prominence))
 
         return bit_0, bit_1
+    # endregion **DEPR_GET_PEAKS**
 
     def decode(self, data):
         """# Decode
@@ -279,6 +288,7 @@ class decoder:
         else:
             return self._dynamic_decode(data)
 
+    # region STATIC_DEC
     def _static_decode(self, data):
         """
         Subdecoding function that decodes an audio data array independently of its size.
@@ -286,6 +296,7 @@ class decoder:
             **data** : *numpy.ndarray*
                 The audio data. Must be a 1-D numpy array.
         """
+        # TODO: make a way to return multiple messages if the audio contains multiple payloads
         msg = None
         msg_len = None
         self.decoded_msg = None
@@ -302,11 +313,17 @@ class decoder:
         e_range = self.blocksize
 
         end_data_found = False
+
+        # Add padding so every blocks are blocksize lenght and prevent issues when finding the index of the end of the data buffer.
+        pad = (-len(data)) % self.blocksize
+        if pad:
+            data = np.concatenate([data, np.zeros(pad, dtype=data.dtype)])
+        
         while e_range < len(data):
             e_range = s_range + self.blocksize
             buf = data[s_range:e_range]
             self.pre_buffer.extend(signal.fftconvolve(in1=buf, in2=self.h_bp_pre, mode="same"))
-
+            # region _STANDBY
             if self.state == "standby":
                 raw_corr_start_pre = signal.correlate(in1=self.pre_buffer, in2=self.start_pre_signal, method='fft', mode='same').astype(np.complex64)
                 norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.start_pre_signal) ** 2))      # normalized cross-correlation
@@ -329,7 +346,9 @@ class decoder:
                         self.rolling_buffer_divisions.extend(np.zeros(self.blocksize))
                         self.rolling_buffer_divisions.extend(division_idx)
                     self.state="acq"
-
+            # endregion _STANDBY
+            
+            # region _ACQ
             elif self.state == "acq":
                 self.raw_data_queue.append(buf)
 
@@ -343,20 +362,25 @@ class decoder:
                     self.rolling_buffer_divisions.extend(division_idx)
                     self.rolling_buffer_pre.extend(norm_corr_end_pre[-self.blocksize:])
 
-                if len(self.raw_data_queue) * self.blocksize < self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght:
+                # The minimum lenght before starting to check for the end preamble, prevents early detections caused by start preamble
+                # TODO: ensure the whole end preamble is captured so that, in case of a early detected false peak, another check can be made to get the right index 
+                S0 = int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
+                if len(self.raw_data_queue) * self.blocksize < S0:
                     s_range = e_range
                     continue
 
-                max_corr_end_pre = np.max(np.abs(norm_corr_end_pre[int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght):])) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
+                peak = np.argmax(norm_corr_end_pre[S0:]) + S0
+                pre_end_idx = len(self.pre_buffer) - peak
+
+                max_corr_end_pre = np.max(np.abs(norm_corr_end_pre[S0:]))
 
                 if max_corr_end_pre > self.end_pre_threshold:
-                    for i in range(0, len(norm_corr_end_pre), self.blocksize):
-                        if max_corr_end_pre in norm_corr_end_pre[i:i+self.blocksize]:
-                            pre_end_idx = np.argmax(norm_corr_end_pre[i:i+self.blocksize])
-                            end_data_found = True
+                    end_data_found = True
                     self.state = "decode"
             s_range = e_range
+        # endregion _ACQ
 
+        # region _DECODE
         if not end_data_found:
             raise(IndexError("End preamble not detected"))
 
@@ -398,9 +422,9 @@ class decoder:
                         self.rolling_buffer1[n].extend(corr_data[m][n])
 
         try:
-            data_buffer_trimmed_start_idx = int((self.start_pre_duration / 2 + self.start_pre_delay) * self.fs) - self.blocksize + pre_start_idx
-            data_buffer_trimmed_end_idx = corr_data.shape[2] - int((self.end_pre_duration / 2 + self.end_pre_delay) * self.fs) - self.blocksize + pre_end_idx
-
+            data_buffer_trimmed_start_idx = pre_start_idx + int(self.N_pre_start / 2) + self.N_start_pre_delay_lenght - self.blocksize
+            data_buffer_trimmed_end_idx = corr_data.shape[2] - pre_end_idx - int(self.N_pre_end / 2) - self.N_end_pre_delay_lenght
+            
             msg, msg_len = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=data_buffer_trimmed_start_idx, e_idx=data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
             if msg:
@@ -411,13 +435,15 @@ class decoder:
 
         self.raw_data_queue.clear()
         self.state = "standby"
+        # endregion _DECODE
 
+        # region _GRAPHICAL
         if self.graphical:
             buffer_bit_range = []
             buffer_bit_separation = []
             for i in range(data_buffer_trimmed_start_idx, data_buffer_trimmed_end_idx, self.N):
                 buffer_bit_separation.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0])
-            for i in range(data_buffer_trimmed_start_idx, data_buffer_trimmed_end_idx, self.N):
+            for i in range(data_buffer_trimmed_start_idx, data_buffer_trimmed_end_idx - self.N, self.N):
                 buffer_bit_range.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0] + int(self.N * self.min_range))
                 buffer_bit_range.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0] + int(self.N * self.max_range))
             self.graphical_data["rolling_buffer0"] = np.array(self.rolling_buffer0, dtype=np.float32, copy=True)
@@ -437,6 +463,7 @@ class decoder:
 
             self.rolling_buffer_pre.clear()
             self.rolling_buffer_divisions.clear()
+        # endregion _GRAPHICAL
 
         self.pre_buffer.clear()
 
@@ -450,7 +477,9 @@ class decoder:
             self.decoded_msg = msg
 
         return self.decoded_msg
+    # endregion STATIC_DEC
 
+    # region DYNAMIC_DEC
     def _dynamic_decode(self, data):
         """
         Subdecoding function that decodes a `blocksize` lenght audio data array. The state of the decoder is saved each time the processing of a block is done. This function is called repeatedly to process realtime audio.
@@ -477,9 +506,15 @@ class decoder:
                 self.rolling_buffer_pre = collections.deque()
                 self.rolling_buffer_divisions = collections.deque()
 
+        # Normally, blocks are equal lenght, the padding adds extra safety
+        pad = (-len(data)) % self.blocksize
+        if pad:
+            data = np.concatenate([data, np.zeros(pad, dtype=data.dtype)])
+
         buf = data
         self.pre_buffer.extend(signal.fftconvolve(in1=buf, in2=self.h_bp_pre, mode="same"))
 
+        # region _STANDBY
         if self.state == "standby":
             raw_corr_start_pre = signal.correlate(in1=self.pre_buffer, in2=self.start_pre_signal, method='fft', mode='same').astype(np.complex64)
             norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.start_pre_signal) ** 2))      # normalized cross-correlation
@@ -502,7 +537,9 @@ class decoder:
                     self.rolling_buffer_divisions.extend(np.zeros(self.blocksize))
                     self.rolling_buffer_divisions.extend(division_idx)
                 self.state="acq"
+        # endregion _STANDBY
 
+        # region _ACQ
         # TODO : Add a timeout if data transmission is interrupted or end preamble is not detected
         elif self.state == "acq":
             self.raw_data_queue.append(buf)
@@ -517,16 +554,20 @@ class decoder:
                 self.rolling_buffer_divisions.extend(division_idx)
                 self.rolling_buffer_pre.extend(norm_corr_end_pre[-self.blocksize:])
 
-            if len(self.raw_data_queue) * self.blocksize > self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght:
-                max_corr_end_pre = np.max(np.abs(norm_corr_end_pre[int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght):])) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
-                if max_corr_end_pre > self.end_pre_threshold:
-                    for i in range(0, len(norm_corr_end_pre), self.blocksize):
-                        if max_corr_end_pre in norm_corr_end_pre[i:i+self.blocksize]:
-                            self.pre_end_idx = np.argmax(norm_corr_end_pre[i:i+self.blocksize])
-                            self.end_data_found = True
-                    self.state = "decode"
 
-        elif self.state == "decode":
+            S0 = int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
+            if len(self.raw_data_queue) * self.blocksize > S0:
+                peak = np.argmax(norm_corr_end_pre[S0:]) + S0
+                max_corr_end_pre = norm_corr_end_pre[peak]
+                self.pre_end_idx = len(self.pre_buffer) - peak
+
+                if max_corr_end_pre > self.end_pre_threshold:
+                    self.end_data_found = True
+                    self.state = "decode"
+        # endregion _ACQ
+
+        # region _DECODE
+        if self.state == "decode":
             band_buffer = np.zeros((self.bits.shape[1], len(self.raw_data_queue), self.blocksize), dtype=np.complex64)
             block_idx = 0
 
@@ -567,9 +608,8 @@ class decoder:
                             self.rolling_buffer1[n].extend(corr_data[m][n])
 
             try:
-                self.data_buffer_trimmed_start_idx = int((self.start_pre_duration / 2 + self.start_pre_delay) * self.fs) - self.blocksize + self.pre_start_idx
-                self.data_buffer_trimmed_end_idx = corr_data.shape[2] - int((self.end_pre_duration / 2 + self.end_pre_delay) * self.fs) - self.blocksize + self.pre_end_idx
-
+                self.data_buffer_trimmed_start_idx = self.pre_start_idx + int(self.N_pre_start / 2) + self.N_start_pre_delay_lenght - self.blocksize
+                self.data_buffer_trimmed_end_idx = corr_data.shape[2] - self.pre_end_idx - int(self.N_pre_end / 2) - self.N_end_pre_delay_lenght
                 msg, msg_len = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=self.data_buffer_trimmed_start_idx, e_idx=self.data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
                 print(f"Received ({msg_len} B): {msg}\n") and sys.stdout.flush() if msg != "" else ""
@@ -578,13 +618,15 @@ class decoder:
 
             self.raw_data_queue.clear()
             self.state = "standby"
+            # endregion _DECODE
 
+            # region _GRAPHICAL
             if self.graphical:
                 buffer_bit_range = []
                 buffer_bit_separation = []
                 for i in range(self.data_buffer_trimmed_start_idx, self.data_buffer_trimmed_end_idx, self.N):
                     buffer_bit_separation.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0])
-                for i in range(self.data_buffer_trimmed_start_idx, self.data_buffer_trimmed_end_idx, self.N):
+                for i in range(self.data_buffer_trimmed_start_idx, self.data_buffer_trimmed_end_idx - self.N, self.N):
                     buffer_bit_range.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0] + int(self.N * self.min_range))
                     buffer_bit_range.append(i + np.argwhere(np.array(self.rolling_buffer_divisions)==1)[0] + int(self.N * self.max_range))
                 self.graphical_data["rolling_buffer0"] = np.array(self.rolling_buffer0, dtype=np.float32, copy=True)
@@ -604,6 +646,7 @@ class decoder:
 
                 self.rolling_buffer_pre.clear()
                 self.rolling_buffer_divisions.clear()
+            # endregion _GRAPHICAL
 
             self.pre_buffer.clear()
 
@@ -618,12 +661,17 @@ class decoder:
 
             self.busy = False
             self.dyn_dec_init = False
+            self.state = "standby"
             
             return self.decoded_msg
+    # endregion DYNAMIC_DEC
 
+    # region STR
     def __str__(self):
         pass
+    # endregion STR
 
+    # region SHOW
     def show(self):
         """
         Displays a correlation graph for each channels and for the preambles.\n
@@ -666,7 +714,9 @@ class decoder:
             plt.show()
         else:
             print(f"Note: Graphical mode = {self.graphical}.")
+    # endregion SHOW
 
+    # region SET_PARAMS
     # TODO : Optimize this function with loops instead of if/elses
     def _set_parameters(self, params:dict):
         """
@@ -822,3 +872,4 @@ class decoder:
         else:
             print(f"Invalid type, using default parameter for [\"ecc\"][\"rs_ratio\"])")
             self.rs_ratio = self.default_settings["ecc"]["rs_ratio"]
+    # endregion SET_PARAMS
