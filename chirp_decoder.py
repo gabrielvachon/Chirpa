@@ -363,7 +363,6 @@ class decoder:
                     self.rolling_buffer_pre.extend(norm_corr_end_pre[-self.blocksize:])
 
                 # The minimum lenght before starting to check for the end preamble, prevents early detections caused by start preamble
-                # TODO: ensure the whole end preamble is captured so that, in case of a early detected false peak, another check can be made to get the right index 
                 S0 = int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
                 if len(self.raw_data_queue) * self.blocksize < S0:
                     s_range = e_range
@@ -374,7 +373,8 @@ class decoder:
 
                 max_corr_end_pre = np.max(np.abs(norm_corr_end_pre[S0:]))
 
-                if max_corr_end_pre > self.end_pre_threshold:
+                # If correlation reaches threshold + check pass N_pre_end/2 to get the real max correlation peak
+                if max_corr_end_pre > self.end_pre_threshold and len(self.pre_buffer) - peak > self.N_pre_end // 2:
                     end_data_found = True
                     self.state = "decode"
             s_range = e_range
@@ -422,10 +422,15 @@ class decoder:
                         self.rolling_buffer1[n].extend(corr_data[m][n])
 
         try:
+            
             data_buffer_trimmed_start_idx = pre_start_idx + int(self.N_pre_start / 2) + self.N_start_pre_delay_lenght - self.blocksize
             data_buffer_trimmed_end_idx = corr_data.shape[2] - pre_end_idx - int(self.N_pre_end / 2) - self.N_end_pre_delay_lenght
-            
-            msg, msg_len = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=data_buffer_trimmed_start_idx, e_idx=data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
+
+            # Safety to get a lenght of N for the last byte
+            msg_len = int(np.round((data_buffer_trimmed_end_idx - data_buffer_trimmed_start_idx) / self.N))
+            data_buffer_trimmed_end_idx = data_buffer_trimmed_start_idx + msg_len * self.N
+
+            msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=data_buffer_trimmed_start_idx, e_idx=data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
             if msg:
                 print(f"Received ({msg_len} B): {msg}\n")
@@ -561,7 +566,8 @@ class decoder:
                 max_corr_end_pre = norm_corr_end_pre[peak]
                 self.pre_end_idx = len(self.pre_buffer) - peak
 
-                if max_corr_end_pre > self.end_pre_threshold:
+                # If correlation reaches threshold + check pass N_pre_end/2 to get the real max correlation peak
+                if max_corr_end_pre > self.end_pre_threshold and len(self.pre_buffer) - peak > self.N_pre_end // 2:
                     self.end_data_found = True
                     self.state = "decode"
         # endregion _ACQ
@@ -610,7 +616,12 @@ class decoder:
             try:
                 self.data_buffer_trimmed_start_idx = self.pre_start_idx + int(self.N_pre_start / 2) + self.N_start_pre_delay_lenght - self.blocksize
                 self.data_buffer_trimmed_end_idx = corr_data.shape[2] - self.pre_end_idx - int(self.N_pre_end / 2) - self.N_end_pre_delay_lenght
-                msg, msg_len = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=self.data_buffer_trimmed_start_idx, e_idx=self.data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
+
+                # Safety to get a lenght of N for the last byte
+                msg_len = int(np.round((self.data_buffer_trimmed_end_idx - self.data_buffer_trimmed_start_idx) / self.N))
+                self.data_buffer_trimmed_end_idx = self.data_buffer_trimmed_start_idx + msg_len * self.N 
+            
+                msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=self.data_buffer_trimmed_start_idx, e_idx=self.data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
                 print(f"Received ({msg_len} B): {msg}\n") and sys.stdout.flush() if msg != "" else ""
             except Exception as e:
