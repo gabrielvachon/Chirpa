@@ -428,7 +428,7 @@ class decoder:
 
             # Safety to get a lenght of N for the last byte
             msg_len = int(np.round((data_buffer_trimmed_end_idx - data_buffer_trimmed_start_idx) / self.N))
-            #data_buffer_trimmed_end_idx = data_buffer_trimmed_start_idx + msg_len * self.N
+            data_buffer_trimmed_end_idx = data_buffer_trimmed_start_idx + msg_len * self.N
 
             msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=data_buffer_trimmed_start_idx, e_idx=data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
@@ -622,7 +622,7 @@ class decoder:
 
                 # Safety to get a lenght of N for the last byte
                 msg_len = int(np.round((self.data_buffer_trimmed_end_idx - self.data_buffer_trimmed_start_idx) / self.N))
-                #self.data_buffer_trimmed_end_idx = self.data_buffer_trimmed_start_idx + msg_len * self.N 
+                self.data_buffer_trimmed_end_idx = self.data_buffer_trimmed_start_idx + msg_len * self.N 
             
                 msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=self.data_buffer_trimmed_start_idx, e_idx=self.data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
