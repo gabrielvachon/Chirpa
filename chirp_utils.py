@@ -96,7 +96,7 @@ default_settings = {
                 "type": "kaiser",
                 "beta": 8
             },
-            "threshold": 0.15
+            "threshold": 0.2
         },
         "end":
         {
@@ -106,7 +106,7 @@ default_settings = {
                 "type": "kaiser",
                 "beta": 8
             },
-            "threshold": 0.15
+            "threshold": 0.2
         }
     },
     "decoder":{

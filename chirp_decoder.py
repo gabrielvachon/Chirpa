@@ -4,7 +4,6 @@ import collections
 from matplotlib import pyplot as plt
 from chirp_utils import linear_chirp, default_settings
 import sys
-from unireedsolomon import RSCoder
 
 class decoder:
     """# Chirpa decoder
@@ -327,7 +326,7 @@ class decoder:
             if self.state == "standby":
                 raw_corr_start_pre = signal.correlate(in1=self.pre_buffer, in2=self.start_pre_signal, method='fft', mode='same').astype(np.complex64)
                 norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.start_pre_signal) ** 2))      # normalized cross-correlation
-                norm_corr_start_pre = np.abs(raw_corr_start_pre) / norm_local
+                norm_corr_start_pre = np.abs(raw_corr_start_pre) / (norm_local + 1e-12)
 
                 max_corr_start_pre = np.max(np.abs(norm_corr_start_pre))
                 if max_corr_start_pre > self.start_pre_threshold:
@@ -354,7 +353,7 @@ class decoder:
 
                 raw_corr_end_pre = signal.correlate(in1=self.pre_buffer, in2=self.end_pre_signal, method='fft', mode='same').astype(np.complex64)
                 norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.end_pre_signal) ** 2))
-                norm_corr_end_pre = np.abs(raw_corr_end_pre) / norm_local
+                norm_corr_end_pre = np.abs(raw_corr_end_pre) / (norm_local + 1e-12)
 
                 if self.graphical:
                     division_idx = np.zeros(self.blocksize)
@@ -363,11 +362,12 @@ class decoder:
                     self.rolling_buffer_pre.extend(norm_corr_end_pre[-self.blocksize:])
 
                 # The minimum lenght before starting to check for the end preamble, prevents early detections caused by start preamble
-                S0 = int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
-                if len(self.raw_data_queue) * self.blocksize < S0:
+                data_start = pre_start_idx + self.N_pre_start // 2 + self.N_start_pre_delay_lenght - self.blocksize
+                dropped = len(self.raw_data_queue) * self.blocksize - len(self.pre_buffer)    # échantillons déjà éjectés du deque
+                S0 = max(0, max(0, data_start) + self.N + self.N_end_pre_delay_lenght + self.N_pre_end // 2 - dropped)
+                if S0 >= len(norm_corr_end_pre):       # pas assez de signal reçu
                     s_range = e_range
                     continue
-
                 peak = np.argmax(norm_corr_end_pre[S0:]) + S0
                 pre_end_idx = len(self.pre_buffer) - peak
 
@@ -400,7 +400,7 @@ class decoder:
             for n in range(self.bits.shape[1]):
                 raw_corr = signal.correlate(in1=band_buffer[n], in2=self.bits[m][n], method='fft', mode='same').astype(np.complex64)                
                 norm_local = np.sqrt(np.sum(np.abs(band_buffer[n]) ** 2)) * np.sqrt(np.sum(np.abs(self.bits[m][n]) ** 2)) + 1e-12 # edit added 1e-12
-                corr_data[m][n] = np.abs(raw_corr) / norm_local
+                corr_data[m][n] = np.abs(raw_corr) / (norm_local + 1e-12)
 
         corr_data = np.sign(corr_data) * np.abs(corr_data) ** self.correlation_power_factor
         for n in range(self.bits.shape[1]):
@@ -428,7 +428,7 @@ class decoder:
 
             # Safety to get a lenght of N for the last byte
             msg_len = int(np.round((data_buffer_trimmed_end_idx - data_buffer_trimmed_start_idx) / self.N))
-            data_buffer_trimmed_end_idx = data_buffer_trimmed_start_idx + msg_len * self.N
+            #data_buffer_trimmed_end_idx = data_buffer_trimmed_start_idx + msg_len * self.N
 
             msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=data_buffer_trimmed_start_idx, e_idx=data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
@@ -473,6 +473,7 @@ class decoder:
         self.pre_buffer.clear()
 
         if self.rs_enabled:
+            from unireedsolomon import RSCoder
             rs_dec = RSCoder(msg_len, int(np.round(msg_len/self.rs_ratio)))
             try:
                 self.decoded_msg, _ = rs_dec.decode(msg)
@@ -523,8 +524,9 @@ class decoder:
         if self.state == "standby":
             raw_corr_start_pre = signal.correlate(in1=self.pre_buffer, in2=self.start_pre_signal, method='fft', mode='same').astype(np.complex64)
             norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.start_pre_signal) ** 2))      # normalized cross-correlation
-            norm_corr_start_pre = np.abs(raw_corr_start_pre) / norm_local
+            norm_corr_start_pre = np.abs(raw_corr_start_pre) / (norm_local + 1e-12)
 
+            # TODO : Add condition to get the highest correlation peak
             max_corr_start_pre = np.max(np.abs(norm_corr_start_pre))
             if max_corr_start_pre > self.start_pre_threshold:
                 self.pre_buffer.clear()
@@ -551,7 +553,7 @@ class decoder:
 
             raw_corr_end_pre = signal.correlate(in1=self.pre_buffer, in2=self.end_pre_signal, method='fft', mode='same').astype(np.complex64)
             norm_local = np.sqrt(np.sum(np.abs(self.pre_buffer) ** 2)) * np.sqrt(np.sum(np.abs(self.end_pre_signal) ** 2))
-            norm_corr_end_pre = np.abs(raw_corr_end_pre) / norm_local
+            norm_corr_end_pre = np.abs(raw_corr_end_pre) / (norm_local + 1e-12)
 
             if self.graphical:
                 division_idx = np.zeros(self.blocksize)
@@ -559,9 +561,10 @@ class decoder:
                 self.rolling_buffer_divisions.extend(division_idx)
                 self.rolling_buffer_pre.extend(norm_corr_end_pre[-self.blocksize:])
 
-
-            S0 = int(self.N_pre_start / 2 + self.N_start_pre_delay_lenght + self.N_end_pre_delay_lenght) # edit, added range in array to prevent max value from start preamble from detecting false end preamble positive
-            if len(self.raw_data_queue) * self.blocksize > S0:
+            data_start = self.pre_start_idx + self.N_pre_start // 2 + self.N_start_pre_delay_lenght - self.blocksize
+            dropped = len(self.raw_data_queue) * self.blocksize - len(self.pre_buffer)    # échantillons déjà éjectés du deque
+            S0 = max(0, max(0, data_start) + self.N + self.N_end_pre_delay_lenght + self.N_pre_end // 2 - dropped)
+            if S0 < len(norm_corr_end_pre):
                 peak = np.argmax(norm_corr_end_pre[S0:]) + S0
                 max_corr_end_pre = norm_corr_end_pre[peak]
                 self.pre_end_idx = len(self.pre_buffer) - peak
@@ -592,7 +595,7 @@ class decoder:
                 for n in range(self.bits.shape[1]):
                     raw_corr = signal.correlate(in1=band_buffer[n], in2=self.bits[m][n], method='fft', mode='same').astype(np.complex64)                    
                     norm_local = np.sqrt(np.sum(np.abs(band_buffer[n]) ** 2)) * np.sqrt(np.sum(np.abs(self.bits[m][n]) ** 2)) + 1e-12 # edit added 1e-12
-                    corr_data[m][n] = np.abs(raw_corr) / norm_local
+                    corr_data[m][n] = np.abs(raw_corr) / (norm_local + 1e-12)
 
             corr_data = np.sign(corr_data) * np.abs(corr_data) ** self.correlation_power_factor
             for n in range(self.bits.shape[1]):
@@ -619,7 +622,7 @@ class decoder:
 
                 # Safety to get a lenght of N for the last byte
                 msg_len = int(np.round((self.data_buffer_trimmed_end_idx - self.data_buffer_trimmed_start_idx) / self.N))
-                self.data_buffer_trimmed_end_idx = self.data_buffer_trimmed_start_idx + msg_len * self.N 
+                #self.data_buffer_trimmed_end_idx = self.data_buffer_trimmed_start_idx + msg_len * self.N 
             
                 msg, _ = self._corr_to_bytes(corr_data=corr_data, fs=self.fs, T=self.T, s_idx=self.data_buffer_trimmed_start_idx, e_idx=self.data_buffer_trimmed_end_idx, min_range=self.min_range, max_range=self.max_range) #corr_to_char(bit_0=bit_0, bit_1=bit_1, fs=fs, T=T)
 
@@ -662,6 +665,7 @@ class decoder:
             self.pre_buffer.clear()
 
             if self.rs_enabled:
+                from unireedsolomon import RSCoder
                 rs_dec = RSCoder(msg_len, int(np.round(msg_len/self.rs_ratio)))
                 try:
                     self.decoded_msg, _ = rs_dec.decode(msg)
